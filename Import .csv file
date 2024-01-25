@@ -1,0 +1,98 @@
+// Code to read in raw data from Bluno Beetle into .csv file that is Excel compatible
+
+
+// import csv
+from datetime import datetime
+
+def process_line(line):
+    # Split the line into words
+    words = line.split()
+    
+    # Check for information
+    if all(keyword in words for keyword in ['Characteristic', '(DFB1)']):
+        # Extract timestamp and handle the case when it's invalid
+        #print(words)
+        try:
+            parsed_time = datetime.strptime(words[0], "%H:%M:%S.%f")
+        except ValueError as e:
+            print(f"Error parsing timestamp: {e}")
+            return None
+        formatted_time = parsed_time.strftime("%H:%M")
+        
+        # Find indices of words containing '<' or '>'
+        indices = [index for index, word in enumerate(words) if '<' in word or '>' in word]
+        if (len(indices) >= 2):
+            dif = indices[-1]-indices[0]
+            for i in range(1, dif):
+                indices.insert(i,indices[0]+i)
+        # convert data
+        data = hex_to_string(words, indices)
+        return [formatted_time] + data
+    else:
+        return None
+    
+    
+def hex_to_string(words, indices):
+    # Convert hexadecimal values to alphanumeric strings enclosed in "<" and ">"
+
+    modified_words = [None] * 3
+
+    for i, value in enumerate(indices):
+        cleaned_word = words[value].replace('<', '').replace('>', '')
+        try:
+            # Convert each byte of hexadecimal to ASCII string
+            ascii_string = bytes.fromhex(cleaned_word).decode('utf-8')
+            ascii_string = ascii_string.replace('\r\n', '')
+            modified_words[i] = ascii_string
+        except ValueError as e:
+            print(f"Error converting '{cleaned_word}' to ASCII: {e}")
+        
+    return modified_words
+    
+
+def process(input_file, output_csv):
+    try:
+        with open(input_file, 'r') as file:
+            lines = file.readlines()
+
+        # Specify the column fields for the CSV
+        header = ['Time', 'Flex Angle', 'Heart Rate', 'Avg. HR']
+
+        with open(output_csv, 'w', newline='') as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(header)
+
+            for line in lines:
+                # Process the line based on known keywords
+                processed_words = process_line(line)
+
+                # Extract time and other fields
+                if processed_words is not None:
+                    time, *data_fields = processed_words
+                    # Align data with headers
+                    result = []
+                    for string in data_fields:
+                        parts = string.split()
+                        result.extend(part for part in parts if part)
+                    # Concatenating short strings
+                    for j in range(3):
+                        if (len(result[j]) == 1):
+                            num = result[j]+result[j+1]
+                            del result[j]
+                            del result[j]
+                            result.insert(j, num)
+                            break
+                    # Write to CSV
+                    if len(result) > 2:
+                        csv_writer.writerow([time, result[0], result[1], result[2]])
+                        print(f'Successfully converted and saved to {output_csv}')
+
+    except FileNotFoundError:
+        print(f'Error: File {input_file} not found.')
+    except Exception as e:
+        print(f'Error: {e}')
+        
+
+input_file = 'log_data.rtf'  # Replace with the input file path
+output_csv = 'sensor_data.csv'  # Replace with the output CSV file path (overwritten)
+process(input_file, output_csv)
