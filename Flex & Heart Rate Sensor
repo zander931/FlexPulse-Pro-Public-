@@ -1,0 +1,106 @@
+// Main script for Bluno Beetle to read data from flex sensor and pulseoximeter/ heart rate sensor
+
+
+#include <Wire.h> 
+#include "MAX30105.h" 
+#include "heartRate.h"
+
+unsigned long previous_time = 0;
+// Flex sensor connected to analog pin A2
+const int flexPin = A2;
+
+// Set up heart rate sensor variables
+MAX30105 particleSensor; 
+const byte RATE_SIZE = 4; // Increase this for more averaging. 4 is good. 
+byte rates[RATE_SIZE]; // Array of heart rates 
+byte rateSpot = 0; 
+long lastBeat = 0; // Time at which the last beat occurred 
+float beatsPerMinute; 
+int beatAvg; 
+
+// Calibration points: actual angle values corresponding to specific sensor readings
+//const int oldcalibrationPoints[] = { 0, 10, 20, 30, 40, 60, 80, 90 };
+const int calibrationPoints[] = { 180, 160, 130, 110, 90, 70, 50, 20 };
+const int sensorReadings[] = { 1023, 900, 600, 300, 250, 170, 100, 70 };
+
+// check sensor is connected and working
+void setup() {
+  Serial.begin(115200);
+  pinMode(flexPin, INPUT);
+  
+  // Initialise sensor
+  Serial.println("Initialising...");
+  while(!particleSensor.begin(Wire, I2C_SPEED_FAST)) { // Use default I2C port, 400kHz speed
+    Serial.println("MAX30105 not found."); 
+    Serial.println("Please check wiring/power.");
+  }; 
+
+  //Serial.println("Place your index finger on the sensor with steady pressure.");
+  particleSensor.setup();  // Configure sensor with default settings
+  particleSensor.setPulseAmplitudeRed(0x0A);  // Turn Red LED to low to indicate sensor is running
+  delay(2000);
+}
+
+void loop() {
+
+  int flexValue = analogRead(flexPin);
+  long irValue = particleSensor.getIR();
+
+  // Simplified beat detection 
+  if (irValue > 50000) { // We sensed a beat! 
+    if (lastBeat != 0) {
+      long delta = millis() - lastBeat; // time since last beat
+      beatsPerMinute = 60 / (delta / 1000.0)/45;
+    }
+    lastBeat = millis();  
+    
+    if (beatsPerMinute < 220 && beatsPerMinute > 20) { // Human BPM threshold
+      rates[rateSpot++] = (byte)beatsPerMinute; // Store this reading in the array 
+      rateSpot %= RATE_SIZE; // Wrap variable 
+      // Take average of readings 
+      beatAvg = 0; 
+      for (byte x = 0; x < RATE_SIZE; x++) {
+        beatAvg += rates[x];  
+      } 
+      beatAvg /= RATE_SIZE;
+    }
+  } else {
+    beatsPerMinute = 0; // reset BPM if no beat is detected
+  }
+  unsigned long elapsed_time = millis();
+  if (elapsed_time - previous_time > 3000) {
+    
+    // Map the sensor value to the corresponding actual angle using interpolation
+    float flexAngle = mapSensorToAngle(flexValue);
+    // Serial.print("Flex Value: ");
+    //Serial.println(flexValue);
+    //Serial.print("Flex Angle: ");
+    Serial.print(flexAngle, 0);
+    // Serial.print("IR="); 
+    // Serial.println(irValue); 
+    //Serial.print("BPM="); 
+    Serial.print(" ");
+    Serial.print(beatsPerMinute, 0);
+    //Serial.print("Avg BPM=");
+    Serial.print(" ");
+    Serial.println(beatAvg, 1);
+    previous_time = elapsed_time;
+  }
+}
+
+// Function to perform interpolation for mapping sensor values to actual angles
+float mapSensorToAngle(int sensorValue) {
+  // loop through length of calibration points
+  for (int i=0; i<8; i++) {
+    // bubble sort for short array
+    if (sensorReadings[i] > sensorValue) {
+      continue;
+    } else {
+      // interpolation calculation
+      float proportion = (sensorValue - sensorReadings[i]) / (sensorReadings[i-1] - sensorReadings[i]);
+      float delta = proportion * (calibrationPoints[i]-calibrationPoints[i-1]);
+      float angle = calibrationPoints[i] - truncf(delta * 10) / 10; // rounded output for better visualisation
+      return angle;
+    }
+  }
+}
